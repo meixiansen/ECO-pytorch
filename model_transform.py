@@ -57,12 +57,7 @@ model = TSN(num_class, args.num_segments, args.pretrained_parts, args.modality,
             base_model=args.arch,
             consensus_type=args.consensus_type, dropout=args.dropout, partial_bn=not args.no_partialbn)
 
-#model = torch.nn.DataParallel(model, device_ids=args.gpus).cuda()
-#device = torch.device('cpu')
-checkpoint = torch.load('/data/wangchao/code/dp_learning/VideoAnalysis/ECO-pytorch/logs/eco_lite_finetune_UCF101_rgb_epoch_40_checkpoint.pth.tar')
-#pretained_dict = checkpoint['state_dict']
-#model.load_state_dict(pretained_dict)
-#model.eval()
+checkpoint = torch.load('./logs/eco_lite_finetune_UCF101_rgb_epoch_40_checkpoint.pth.tar')
 
 from collections import OrderedDict
 new_state_dict = OrderedDict()
