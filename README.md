@@ -1,3 +1,6 @@
+  
+### 在以下基础上，增加了转换训练好的ECO模型和C++调用模型做行为识别的例子
+
 #### This is a fork of [Can Zhang](https://github.com/zhang-can/ECO-pytorch)'s PyTorch implementation for the [paper](https://arxiv.org/pdf/1804.09066.pdf):
 ##### " ECO: Efficient Convolutional Network for Online Video Understanding, European Conference on Computer Vision (ECCV), 2018." By Mohammadreza Zolfaghari, Kamaljeet Singh, Thomas Brox
  
@@ -88,5 +91,4 @@ year={2018}
 
   Questions can also be left as issues in the repository. We will be happy to answer them.
   
-  
-### 在以上基础上，增加了转换训练好的ECO模型和C++调用模型做行为识别的例子
+
