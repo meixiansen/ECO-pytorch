@@ -87,3 +87,6 @@ year={2018}
   [Mohammadreza Zolfaghari](https://github.com/mzolfaghari/ECO-pytorch), [Can Zhang](https://github.com/zhang-can/ECO-pytorch)
 
   Questions can also be left as issues in the repository. We will be happy to answer them.
+  
+  
+### 在以上基础上，增加了转换训练好的ECO模型和C++调用模型做行为识别的例子
