@@ -3,8 +3,9 @@ from torch import nn
 from ops.basic_ops import ConsensusModule, Identity
 from transforms import *
 from torch.nn.init import xavier_uniform_, constant_
-
-class TSN(nn.Module):
+#nn.Module
+#torch.jit.ScriptModule
+class TSN(torch.jit.ScriptModule):
     def __init__(self, num_class, num_segments, pretrained_parts, modality,
                  base_model='resnet101', new_length=None,
                  consensus_type='avg', before_softmax=True,
@@ -37,11 +38,16 @@ TSN Configurations:
     consensus_module:   {}
     dropout_ratio:      {}
         """.format(base_model, self.modality, self.num_segments, self.new_length, consensus_type, self.dropout)))
-
-        self._prepare_base_model(base_model)
+       
+        #for tracing
+        tbase_model = self._prepare_base_model_ECO(base_model)
+        feature_dim = self._prepare_tsn_tracing(tbase_model,num_class)
+        tbase_model.eval()
+        self.base_model = torch.jit.trace(tbase_model , torch.rand(8, 3, 224, 224))
+        #self._prepare_base_model(base_model)
 
         # zc comments
-        feature_dim = self._prepare_tsn(num_class)
+        #feature_dim = self._prepare_tsn(num_class)
         # modules = list(self.modules())
         # print(modules)
         # zc comments end
@@ -74,6 +80,39 @@ TSN Configurations:
         self._enable_pbn = partial_bn
         if partial_bn:
             self.partialBN(True)
+
+    def _prepare_tsn_tracing(self,tbase_model ,num_class):
+        
+        feature_dim = getattr(tbase_model, tbase_model.last_layer_name).in_features
+        if self.dropout == 0:
+            setattr(tbase_model, tbase_model.last_layer_name, nn.Linear(feature_dim, num_class))
+            self.new_fc = None
+        else:
+            setattr(tbase_model, tbase_model.last_layer_name, nn.Dropout(p=self.dropout))
+            self.new_fc = nn.Linear(feature_dim, num_class)
+
+        std = 0.001
+        if self.new_fc is None:
+            xavier_uniform_(getattr(tbase_model, tbase_model.last_layer_name).weight)
+            constant_(getattr(tbase_model, tbase_model.last_layer_name).bias, 0)
+        else:
+            xavier_uniform_(self.new_fc.weight)
+            constant_(self.new_fc.bias, 0)
+        return feature_dim
+
+    def _prepare_base_model_ECO(self, base_model):
+        import tf_model_zoo
+        tbase_model = getattr(tf_model_zoo, base_model)(num_segments=self.num_segments, pretrained_parts=self.pretrained_parts)
+        tbase_model.last_layer_name = 'fc_final'
+        self.input_size = 224
+        self.input_mean = [104, 117, 128]
+        self.input_std = [1]
+
+        if self.modality == 'Flow':
+            self.input_mean = [128]
+        elif self.modality == 'RGBDiff':
+            self.input_mean = self.input_mean * (1 + self.new_length)
+        return tbase_model
 
     def _prepare_tsn(self, num_class):
         feature_dim = getattr(self.base_model, self.base_model.last_layer_name).in_features
@@ -329,53 +368,64 @@ TSN Configurations:
             {'params': bn, 'lr_mult': 1, 'decay_mult': 0,
              'name': "BN scale/shift"},
         ]
-
+    #for tracing
+    @torch.jit.script_method
     def forward(self, input):
-        sample_len = (3 if self.modality == "RGB" else 2) * self.new_length
-
-        if self.modality == 'RGBDiff':
-            sample_len = 3 * self.new_length
-            input = self._get_diff(input)
-
-        # input.size(): [32, 9, 224, 224]
-        # after view() func: [96, 3, 224, 224]
-        # print(input.view((-1, sample_len) + input.size()[-2:]).size())
-        if self.base_model_name == "C3DRes18":
-            before_permute = input.view((-1, sample_len) + input.size()[-2:])
-            input_var = torch.transpose(before_permute.view((-1, self.num_segments) + before_permute.size()[1:]), 1, 2)
-        else:
-            input_var = input.view((-1, sample_len) + input.size()[-2:])
+        sample_len = 3
+        input_var = input.view((-1, sample_len) + input.size()[-2:])
         base_out = self.base_model(input_var)
+        base_out = self.new_fc(base_out)       
+        output = base_out
+        return output
 
-        # zc comments
-        if self.dropout > 0:
-            base_out = self.new_fc(base_out)
-
-        if not self.before_softmax:
-            base_out = self.softmax(base_out)
-        # zc comments end
-        
-        if self.reshape:
-          
-            if self.base_model_name == 'C3DRes18':
-                output = base_out
-                output = self.consensus(base_out)
-                return output
-            elif self.base_model_name == 'ECO':
-                output = base_out
-                output = self.consensus(base_out)
-                return output
-            elif self.base_model_name == 'ECOfull':
-                output = base_out
-                output = self.consensus(base_out)
-                return output
-            else:
-                # base_out.size(): [32, 3, 101], [batch_size, num_segments, num_class] respectively
-                base_out = base_out.view((-1, self.num_segments) + base_out.size()[1:])
-                # output.size(): [32, 1, 101]
-                output = self.consensus(base_out)
-                # output after squeeze(1): [32, 101], forward() returns size: [batch_size, num_class]
-                return output.squeeze(1)
+     
+#    @torch.jit.script_method
+#    def forward(self, input):
+#        sample_len = (3 if self.modality == "RGB" else 2) * self.new_length
+#
+#        if self.modality == 'RGBDiff':
+#            sample_len = 3 * self.new_length
+#            input = self._get_diff(input)
+#
+#        # input.size(): [32, 9, 224, 224]
+#        # after view() func: [96, 3, 224, 224]
+#        # print(input.view((-1, sample_len) + input.size()[-2:]).size())
+#        if self.base_model_name == "C3DRes18":
+#            before_permute = input.view((-1, sample_len) + input.size()[-2:])
+#            input_var = torch.transpose(before_permute.view((-1, self.num_segments) + before_permute.size()[1:]), 1, 2)
+#        else:
+#            input_var = input.view((-1, sample_len) + input.size()[-2:])
+#        base_out = self.base_model(input_var)
+#
+#        # zc comments
+#        if self.dropout > 0:
+#            base_out = self.new_fc(base_out)
+#
+#        if not self.before_softmax:
+#            base_out = self.softmax(base_out)
+#        # zc comments end
+#        
+#        if self.reshape:
+#          
+#            if self.base_model_name == 'C3DRes18':
+#                output = base_out
+#                output = self.consensus(base_out)
+#                return output
+#            elif self.base_model_name == 'ECO':
+#                output = base_out
+#                output = self.consensus(base_out)
+#                return output
+#            elif self.base_model_name == 'ECOfull':
+#                output = base_out
+#                output = self.consensus(base_out)
+#                return output
+#            else:
+#                # base_out.size(): [32, 3, 101], [batch_size, num_segments, num_class] respectively
+#                base_out = base_out.view((-1, self.num_segments) + base_out.size()[1:])
+#                # output.size(): [32, 1, 101]
+#                output = self.consensus(base_out)
+#                # output after squeeze(1): [32, 101], forward() returns size: [batch_size, num_class]
+#                return output.squeeze(1)
 
 
     def _get_diff(self, input, keep_rgb=False):
